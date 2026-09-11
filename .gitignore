@@ -1,0 +1,36 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Logs
+*.log
+
+# Local data directories
+data/
+*.db
+
+# Environment
+.env
+.env.local
+
+# Go build cache / test artifacts
+*.test
+*.out
+*.prof
+coverage.txt
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
