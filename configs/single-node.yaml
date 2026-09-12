@@ -1,0 +1,13 @@
+# SamanvayDB single-node configuration
+#
+# This is the minimal config to run a standalone node with no replication.
+# For multi-node clusters, add raft_peers entries pointing to peer addresses.
+
+node_id: "node-1"
+listen_addr: "127.0.0.1:7000"
+data_dir: "./data/node-1"
+
+# Uncomment and populate for multi-node Raft clusters (Phase 3+):
+# raft_peers:
+#   - "127.0.0.1:7001"
+#   - "127.0.0.1:7002"
