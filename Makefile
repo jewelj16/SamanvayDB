@@ -1,4 +1,4 @@
-.PHONY: build test test-race cluster-up cluster-down clean
+.PHONY: build test test-race proto-gen cluster-up cluster-down clean
 
 # Build the server binary
 build:
@@ -11,6 +11,12 @@ test:
 # Run all tests with the race detector — non-negotiable for concurrent code
 test-race:
 	go test -race ./...
+
+# Regenerate Go stubs from proto/kv.proto (requires protoc + plugins)
+proto-gen:
+	protoc --go_out=. --go_opt=paths=source_relative \
+	       --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+	       proto/kv.proto
 
 # Start a local cluster (placeholder — wired up in later phases)
 cluster-up:

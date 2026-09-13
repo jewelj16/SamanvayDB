@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package kv;
+
+option go_package = "samanvaydb/proto/kvpb";
+
+// KV is the wire contract for key-value operations.
+// Keys and values are bytes (never string) so the storage engine treats them
+// as opaque binary data. This definition is extended (never replaced) in later
+// phases (sharding, transactions).
+service KV {
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
+
+message PutRequest {
+  bytes key   = 1;
+  bytes value = 2;
+}
+
+message PutResponse {
+  bool   ok    = 1;
+  string error = 2;
+}
+
+message GetRequest {
+  bytes key = 1;
+}
+
+message GetResponse {
+  bool   found = 1;
+  bytes  value = 2;
+  string error = 3;
+}
+
+message DeleteRequest {
+  bytes key = 1;
+}
+
+message DeleteResponse {
+  bool   ok    = 1;
+  string error = 2;
+}
