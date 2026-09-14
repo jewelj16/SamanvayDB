@@ -4,13 +4,19 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"google.golang.org/grpc"
+
 	"samanvaydb/internal/config"
+	"samanvaydb/internal/kvserver"
 	"samanvaydb/internal/logging"
 	"samanvaydb/internal/server"
+	"samanvaydb/internal/storage/memkv"
+	"samanvaydb/proto/kvpb"
 )
 
 func main() {
@@ -38,15 +44,35 @@ func main() {
 
 	// Start the health-check HTTP server.
 	hs := server.NewHealthServer(*healthAddr, cfg.NodeID, logger)
-	addr, _, err := hs.Start()
+	healthListenAddr, _, err := hs.Start()
 	if err != nil {
 		logger.Error("failed to start health server", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("health server listening", "addr", healthListenAddr.String())
 
-	// Config loaded, logger initialized — mark as ready.
+	// Initialize in-memory KV store (replaced by LSM engine in Phase 2).
+	store := memkv.New()
+
+	// Start gRPC KV server.
+	lis, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		logger.Error("failed to listen", "addr", cfg.ListenAddr, "error", err)
+		os.Exit(1)
+	}
+	grpcSrv := grpc.NewServer()
+	kvpb.RegisterKVServer(grpcSrv, kvserver.New(store, logger))
+
+	go func() {
+		logger.Info("gRPC KV server listening", "addr", cfg.ListenAddr)
+		if err := grpcSrv.Serve(lis); err != nil {
+			logger.Error("gRPC server stopped", "error", err)
+		}
+	}()
+
+	// Mark ready after all services are up.
 	hs.SetReady()
-	logger.Info("health server ready", "addr", addr.String())
+	logger.Info("node ready")
 
 	// Wait for shutdown signal.
 	sigCh := make(chan os.Signal, 1)
@@ -54,5 +80,6 @@ func main() {
 	sig := <-sigCh
 
 	logger.Info("shutting down", "signal", sig.String())
+	grpcSrv.GracefulStop()
 	hs.Shutdown(context.Background())
 }

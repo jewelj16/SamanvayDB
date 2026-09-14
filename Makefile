@@ -1,8 +1,9 @@
 .PHONY: build test test-race proto-gen cluster-up cluster-down clean
 
-# Build the server binary
+# Build all binaries
 build:
 	go build -o bin/samanvaydb-server ./cmd/samanvaydb-server
+	go build -o bin/kvctl ./cmd/kvctl
 
 # Run all tests
 test:
