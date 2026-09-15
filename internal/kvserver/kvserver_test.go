@@ -12,17 +12,17 @@ import (
 
 	"samanvaydb/internal/kvserver"
 	"samanvaydb/internal/logging"
-	"samanvaydb/internal/storage/memkv"
+	"samanvaydb/internal/storage"
 	"samanvaydb/proto/kvpb"
 )
 
 func newTestKVClient(t *testing.T) (kvpb.KVClient, func()) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
-	store := memkv.New()
+	engine := storage.NewMemEngine()
 	logger := logging.NewLogger(logging.Options{NodeID: "test", Level: slog.LevelError})
 	srv := grpc.NewServer()
-	kvpb.RegisterKVServer(srv, kvserver.New(store, logger))
+	kvpb.RegisterKVServer(srv, kvserver.New(engine, logger))
 	go srv.Serve(lis)
 
 	conn, err := grpc.DialContext(context.Background(), "bufnet",

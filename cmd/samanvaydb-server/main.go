@@ -15,7 +15,7 @@ import (
 	"samanvaydb/internal/kvserver"
 	"samanvaydb/internal/logging"
 	"samanvaydb/internal/server"
-	"samanvaydb/internal/storage/memkv"
+	"samanvaydb/internal/storage"
 	"samanvaydb/proto/kvpb"
 )
 
@@ -51,8 +51,8 @@ func main() {
 	}
 	logger.Info("health server listening", "addr", healthListenAddr.String())
 
-	// Initialize in-memory KV store (replaced by LSM engine in Phase 2).
-	store := memkv.New()
+	// Initialize storage engine (MemEngine now; swap to LSMEngine later).
+	engine := storage.NewMemEngine()
 
 	// Start gRPC KV server.
 	lis, err := net.Listen("tcp", cfg.ListenAddr)
@@ -61,7 +61,7 @@ func main() {
 		os.Exit(1)
 	}
 	grpcSrv := grpc.NewServer()
-	kvpb.RegisterKVServer(grpcSrv, kvserver.New(store, logger))
+	kvpb.RegisterKVServer(grpcSrv, kvserver.New(engine, logger))
 
 	go func() {
 		logger.Info("gRPC KV server listening", "addr", cfg.ListenAddr)
