@@ -1,85 +1,67 @@
+// Command samanvaydb-server runs one SamanvayDB cluster node.
+//
+//	samanvaydb-server -config configs/single-node.yaml
+//
+// The node reads its YAML config, starts a structured logger carrying its
+// node_id, recovers (or bootstraps) every Raft group it hosts from its data
+// directory, then serves:
+//
+//	listen_addr  gRPC: client KV API, Admin API, inter-node Raft RPCs
+//	http_addr    HTTP: /healthz, /metrics (Prometheus), /status (JSON)
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
-	"net"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"google.golang.org/grpc"
-
 	"samanvaydb/internal/config"
-	"samanvaydb/internal/kvserver"
 	"samanvaydb/internal/logging"
-	"samanvaydb/internal/server"
-	"samanvaydb/internal/storage"
-	"samanvaydb/proto/kvpb"
+	"samanvaydb/internal/node"
 )
 
 func main() {
 	configPath := flag.String("config", "configs/single-node.yaml", "path to YAML config file")
-	healthAddr := flag.String("health-addr", "127.0.0.1:8080", "address for the /healthz HTTP endpoint")
+	healthAddr := flag.String("health-addr", "", "address for the HTTP endpoints (/healthz, /metrics, /status); overrides http_addr")
+	logJSON := flag.Bool("log-json", false, "emit JSON log lines")
+	logLevel := flag.String("log-level", "info", "debug | info | warn | error")
 	flag.Parse()
 
-	// Load configuration.
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
+	if *healthAddr != "" {
+		cfg.HTTPAddr = *healthAddr
+	}
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = "127.0.0.1:8080"
+	}
 
-	// Initialize structured logger with node_id from config.
-	logger := logging.NewLogger(logging.Options{
-		NodeID: cfg.NodeID,
-		JSON:   false,
-	})
-
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
+		fmt.Fprintf(os.Stderr, "bad -log-level: %v\n", err)
+		os.Exit(1)
+	}
+	logger := logging.NewLogger(logging.Options{NodeID: cfg.NodeID, JSON: *logJSON, Level: level})
 	logger.Info("SamanvayDB server starting",
-		"listen_addr", cfg.ListenAddr,
-		"data_dir", cfg.DataDir,
-	)
+		"listen_addr", cfg.ListenAddr, "http_addr", cfg.HTTPAddr, "data_dir", cfg.DataDir,
+		"shards", cfg.Cluster.NumShards, "replication_factor", cfg.Cluster.ReplicationFactor,
+		"cluster_nodes", len(cfg.Cluster.Nodes), "join", cfg.Join)
 
-	// Start the health-check HTTP server.
-	hs := server.NewHealthServer(*healthAddr, cfg.NodeID, logger)
-	healthListenAddr, _, err := hs.Start()
+	n, err := node.New(node.Options{Config: cfg, Logger: logger})
 	if err != nil {
-		logger.Error("failed to start health server", "error", err)
+		logger.Error("failed to start node", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("health server listening", "addr", healthListenAddr.String())
 
-	// Initialize storage engine (MemEngine now; swap to LSMEngine later).
-	engine := storage.NewMemEngine()
-
-	// Start gRPC KV server.
-	lis, err := net.Listen("tcp", cfg.ListenAddr)
-	if err != nil {
-		logger.Error("failed to listen", "addr", cfg.ListenAddr, "error", err)
-		os.Exit(1)
-	}
-	grpcSrv := grpc.NewServer()
-	kvpb.RegisterKVServer(grpcSrv, kvserver.New(engine, logger))
-
-	go func() {
-		logger.Info("gRPC KV server listening", "addr", cfg.ListenAddr)
-		if err := grpcSrv.Serve(lis); err != nil {
-			logger.Error("gRPC server stopped", "error", err)
-		}
-	}()
-
-	// Mark ready after all services are up.
-	hs.SetReady()
-	logger.Info("node ready")
-
-	// Wait for shutdown signal.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
-
 	logger.Info("shutting down", "signal", sig.String())
-	grpcSrv.GracefulStop()
-	hs.Shutdown(context.Background())
+	n.Stop()
 }
