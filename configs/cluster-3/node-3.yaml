@@ -1,0 +1,17 @@
+# Node 3 of a 3-node, 1-shard, RF=3 local cluster.
+# Start all three (one terminal each):
+#   bin/samanvaydb-server -config configs/cluster-3/node-3.yaml
+# Every node must use the same `cluster:` section.
+
+node_id: "node-3"
+listen_addr: "127.0.0.1:7003"
+http_addr: "127.0.0.1:8003"
+data_dir: "./data/node-3"
+
+cluster:
+  num_shards: 1
+  replication_factor: 3
+  nodes:
+    - {id: node-1, addr: "127.0.0.1:7001", http_addr: "127.0.0.1:8001"}
+    - {id: node-2, addr: "127.0.0.1:7002", http_addr: "127.0.0.1:8002"}
+    - {id: node-3, addr: "127.0.0.1:7003", http_addr: "127.0.0.1:8003"}

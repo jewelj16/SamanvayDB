@@ -1,44 +1,190 @@
+// SamanvayDB client-facing KV API.
+//
+// Keys and values are always `bytes`, never `string` — the storage layer
+// treats them as opaque binary data.
+//
+// Every response carries the same routing/error envelope:
+//   code            — machine-readable error class (see ErrorCode)
+//   error           — human-readable detail
+//   redirect_leader — node ID of the shard leader, when code == NOT_LEADER
+//   redirect_addr   — gRPC address of that leader (saves a shard-map lookup)
+//   shard_id        — the shard that owns the key (hash(key) mod NUM_SHARDS)
+//
+// Regenerate with `make proto-gen`.
 syntax = "proto3";
 
-package kv;
+package samanvaydb.kv;
 
 option go_package = "samanvaydb/proto/kvpb";
 
-// KV is the wire contract for key-value operations.
-// Keys and values are bytes (never string) so the storage engine treats them
-// as opaque binary data. This definition is extended (never replaced) in later
-// phases (sharding, transactions).
 service KV {
   rpc Put(PutRequest) returns (PutResponse);
   rpc Get(GetRequest) returns (GetResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // Compare-and-swap. The precondition is evaluated when the command is
+  // applied (in Raft log order), so concurrent CAS calls on one key are
+  // resolved identically on every replica.
+  rpc CompareAndSwap(CASRequest) returns (CASResponse);
+
+  // Distributed locks. Lock state lives under the reserved key prefix
+  // "__lock__:" and is replicated through Raft like any other write.
+  rpc LockAcquire(LockRequest) returns (LockResponse);
+  rpc LockRenew(LockRequest) returns (LockResponse);
+  rpc LockRelease(LockRequest) returns (LockResponse);
+  // Best-effort long-poll until the lock is released or expires. Waiters
+  // are leader-local and are dropped on leader failover; re-issue on error.
+  rpc LockWait(LockWaitRequest) returns (LockWaitResponse);
+}
+
+// ErrorCode is the API-wide error taxonomy. Clients must branch on it:
+//   NOT_LEADER      — retry against redirect_leader (or any replica)
+//   UNAVAILABLE     — no quorum reachable right now; retry with backoff
+//   INVALID_REQUEST — never retry; the request itself is wrong
+enum ErrorCode {
+  OK = 0;
+  NOT_LEADER = 1;
+  UNAVAILABLE = 2;
+  INVALID_REQUEST = 3;
+  CAS_FAILED = 4;
+  ALREADY_HELD = 5;
+  NOT_OWNER = 6;
+  LOCK_EXPIRED = 7;
+  INTERNAL = 8;
+}
+
+// Consistency selects how a GET is served.
+//   LEADER      — linearizable: served by the leader after a ReadIndex
+//                 round confirms it is still the leader.
+//   FOLLOWER_OK — served from any replica's local applied state; may be
+//                 stale (bounded by replication lag).
+enum Consistency {
+  LEADER = 0;
+  FOLLOWER_OK = 1;
 }
 
 message PutRequest {
-  bytes key   = 1;
+  bytes key = 1;
   bytes value = 2;
+  // Optional TTL. Expiry is decided by the shard leader and committed
+  // through Raft as a delete, never judged locally by each replica's clock.
+  uint64 ttl_ms = 3;
+  // Client session for exactly-once retries: a stable client ID and a
+  // per-operation sequence number reused by every retry of the operation;
+  // min_seq is the client's lowest still-outstanding sequence number.
+  bytes client_id = 10;
+  uint64 seq = 11;
+  uint64 min_seq = 12;
 }
 
 message PutResponse {
-  bool   ok    = 1;
+  bool ok = 1;
   string error = 2;
+  ErrorCode code = 3;
+  string redirect_leader = 4;
+  string redirect_addr = 5;
+  int32 shard_id = 6;
 }
 
 message GetRequest {
   bytes key = 1;
+  Consistency consistency = 2;
 }
 
 message GetResponse {
-  bool   found = 1;
-  bytes  value = 2;
+  bool found = 1;
+  bytes value = 2;
   string error = 3;
+  ErrorCode code = 4;
+  string redirect_leader = 5;
+  string redirect_addr = 6;
+  int32 shard_id = 7;
 }
 
 message DeleteRequest {
   bytes key = 1;
+  // Client session for exactly-once retries: a stable client ID and a
+  // per-operation sequence number reused by every retry of the operation;
+  // min_seq is the client's lowest still-outstanding sequence number.
+  bytes client_id = 10;
+  uint64 seq = 11;
+  uint64 min_seq = 12;
 }
 
 message DeleteResponse {
-  bool   ok    = 1;
+  bool ok = 1;
   string error = 2;
+  ErrorCode code = 3;
+  string redirect_leader = 4;
+  string redirect_addr = 5;
+  int32 shard_id = 6;
+}
+
+message CASRequest {
+  bytes key = 1;
+  // The value the key must currently hold. Ignored if expect_absent.
+  bytes expected = 2;
+  // If true, the swap succeeds only if the key does not exist.
+  bool expect_absent = 3;
+  bytes new_value = 4;
+  // Client session for exactly-once retries: a stable client ID and a
+  // per-operation sequence number reused by every retry of the operation;
+  // min_seq is the client's lowest still-outstanding sequence number.
+  bytes client_id = 10;
+  uint64 seq = 11;
+  uint64 min_seq = 12;
+}
+
+message CASResponse {
+  bool ok = 1;
+  string error = 2;
+  ErrorCode code = 3;
+  string redirect_leader = 4;
+  string redirect_addr = 5;
+  int32 shard_id = 6;
+  // On CAS_FAILED: the value actually present when the CAS was applied.
+  bool current_found = 7;
+  bytes current_value = 8;
+}
+
+message LockRequest {
+  string name = 1;
+  string owner_id = 2;
+  uint64 ttl_ms = 3;
+  // Client session for exactly-once retries: a stable client ID and a
+  // per-operation sequence number reused by every retry of the operation;
+  // min_seq is the client's lowest still-outstanding sequence number.
+  bytes client_id = 10;
+  uint64 seq = 11;
+  uint64 min_seq = 12;
+}
+
+message LockResponse {
+  bool ok = 1;
+  string error = 2;
+  ErrorCode code = 3;
+  string redirect_leader = 4;
+  string redirect_addr = 5;
+  int32 shard_id = 6;
+  // The Raft log index of the acquire entry. Strictly increasing across
+  // successive acquisitions of the same lock; protected resources must
+  // reject any token lower than the highest they have seen.
+  uint64 fencing_token = 7;
+  uint64 expires_at_ms = 8;
+  // On ALREADY_HELD: the current holder.
+  string holder = 9;
+}
+
+message LockWaitRequest {
+  string name = 1;
+  uint64 timeout_ms = 2;
+}
+
+message LockWaitResponse {
+  bool released = 1;
+  string error = 2;
+  ErrorCode code = 3;
+  string redirect_leader = 4;
+  string redirect_addr = 5;
+  int32 shard_id = 6;
 }

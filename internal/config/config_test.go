@@ -167,3 +167,74 @@ func searchString(s, substr string) bool {
 	}
 	return false
 }
+
+// TestLoadConfig_ClusterTopology verifies the cluster section round-trips
+// and is validated.
+func TestLoadConfig_ClusterTopology(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	good := write("good.yaml", `
+node_id: node-2
+listen_addr: 127.0.0.1:7002
+http_addr: 127.0.0.1:8002
+data_dir: /tmp/n2
+cluster:
+  num_shards: 3
+  replication_factor: 3
+  nodes:
+    - {id: node-1, addr: 127.0.0.1:7001}
+    - {id: node-2, addr: 127.0.0.1:7002}
+    - {id: node-3, addr: 127.0.0.1:7003}
+  placement:
+    0: [node-1, node-2, node-3]
+raft:
+  election_timeout_min_ms: 200
+  heartbeat_interval_ms: 40
+`)
+	cfg, err := LoadConfig(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Cluster.Nodes) != 3 || cfg.Cluster.NumShards != 3 || len(cfg.Cluster.Placement[0]) != 3 {
+		t.Fatalf("cluster = %+v", cfg.Cluster)
+	}
+	if min, max := cfg.Raft.ElectionTimeouts(); min.Milliseconds() != 200 || max.Milliseconds() != 300 {
+		t.Errorf("election timeouts %v-%v", min, max)
+	}
+	if cfg.Raft.Heartbeat().Milliseconds() != 40 {
+		t.Errorf("heartbeat %v", cfg.Raft.Heartbeat())
+	}
+
+	tests := []struct{ name, body string }{
+		{"self_not_listed", "node_id: x\nlisten_addr: a:1\ndata_dir: d\ncluster:\n  nodes:\n    - {id: y, addr: a:2}\n"},
+		{"duplicate_node", "node_id: y\nlisten_addr: a:1\ndata_dir: d\ncluster:\n  nodes:\n    - {id: y, addr: a:2}\n    - {id: y, addr: a:3}\n"},
+		{"rf_too_large", "node_id: y\nlisten_addr: a:1\ndata_dir: d\ncluster:\n  replication_factor: 5\n  nodes:\n    - {id: y, addr: a:2}\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := LoadConfig(write(tt.name+".yaml", tt.body)); err == nil {
+				t.Error("expected validation error")
+			}
+		})
+	}
+}
+
+// TestLoadConfig_SingleNodeDefaults verifies a config without a cluster
+// section becomes a one-node, one-shard cluster.
+func TestLoadConfig_SingleNodeDefaults(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.yaml")
+	os.WriteFile(p, []byte("node_id: solo\nlisten_addr: 127.0.0.1:7000\ndata_dir: d\n"), 0o644)
+	cfg, err := LoadConfig(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Cluster.Nodes) != 1 || cfg.Cluster.Nodes[0].ID != "solo" || cfg.Cluster.NumShards != 1 || cfg.Cluster.ReplicationFactor != 1 {
+		t.Fatalf("defaults = %+v", cfg.Cluster)
+	}
+}

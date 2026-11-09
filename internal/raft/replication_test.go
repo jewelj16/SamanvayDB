@@ -203,7 +203,7 @@ func TestAppendEntries_AdvancesCommitIndex(t *testing.T) {
 func TestPropose_RejectsNonLeader(t *testing.T) {
 	n := newTestNode("node-1", nil)
 
-	err := n.Propose([]byte("cmd"))
+	_, _, err := n.Propose([]byte("cmd"))
 	if err != ErrNotLeader {
 		t.Errorf("Propose on Follower should return ErrNotLeader, got %v", err)
 	}
@@ -217,7 +217,7 @@ func TestPropose_AppendsToLeaderLog(t *testing.T) {
 	n.becomeLeader()
 	n.mu.Unlock()
 
-	if err := n.Propose([]byte("put:k=v")); err != nil {
+	if _, _, err := n.Propose([]byte("put:k=v")); err != nil {
 		t.Fatalf("Propose on Leader failed: %v", err)
 	}
 	if n.lastLogIndex() != 1 {
@@ -230,7 +230,7 @@ type captureSM struct {
 	applied *[]LogEntry
 }
 
-func (s *captureSM) Apply(e LogEntry) error {
+func (s *captureSM) Apply(e LogEntry) any {
 	*s.applied = append(*s.applied, e)
 	return nil
 }

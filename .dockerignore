@@ -1,0 +1,5 @@
+bin/
+.samanvay-local/
+data/
+**/*.test
+**/*.exe

@@ -204,3 +204,78 @@ func TestCommandType_String(t *testing.T) {
 		}
 	}
 }
+
+// TestCommand_MarshalUnmarshal_Extended verifies every CAS/TTL/lock field
+// round-trips, for every command type.
+func TestCommand_MarshalUnmarshal_Extended(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  Command
+	}{
+		{"put_ttl", Command{Type: CmdPut, Key: []byte("k"), Value: []byte("v"), TimestampMs: 1000, ExpiresAtMs: 6000}},
+		{"cas", Command{Type: CmdCAS, Key: []byte("k"), Value: []byte("new"), Expected: []byte("old"), TimestampMs: 7}},
+		{"cas_absent", Command{Type: CmdCAS, Key: []byte("k"), Value: []byte("new"), ExpectAbsent: true}},
+		{"expire", Command{Type: CmdExpire, Key: []byte("k"), ExpiresAtMs: 99, TimestampMs: 100}},
+		{"lock_acquire", Command{Type: CmdLockAcquire, Key: []byte("__lock__:a"), Owner: []byte("c1"), TTLMs: 5000, TimestampMs: 42}},
+		{"lock_renew", Command{Type: CmdLockRenew, Key: []byte("__lock__:a"), Owner: []byte("c1"), TTLMs: 5000}},
+		{"lock_release", Command{Type: CmdLockRelease, Key: []byte("__lock__:a"), Owner: []byte("c1")}},
+		{"lock_expire", Command{Type: CmdLockExpire, Key: []byte("__lock__:a"), Owner: []byte("c1"), Token: 17, TimestampMs: 9}},
+		{"session", Command{Type: CmdPut, Key: []byte("k"), Value: []byte("v"), ClientID: []byte("client-7"), Seq: 42, MinSeq: 40}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := tt.cmd.Marshal()
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			got, err := Unmarshal(data)
+			if err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if got.Type != tt.cmd.Type || !bytes.Equal(got.Key, tt.cmd.Key) || !bytes.Equal(got.Value, tt.cmd.Value) ||
+				!bytes.Equal(got.Expected, tt.cmd.Expected) || got.ExpectAbsent != tt.cmd.ExpectAbsent ||
+				!bytes.Equal(got.Owner, tt.cmd.Owner) || got.TTLMs != tt.cmd.TTLMs ||
+				got.TimestampMs != tt.cmd.TimestampMs || got.ExpiresAtMs != tt.cmd.ExpiresAtMs || got.Token != tt.cmd.Token ||
+				!bytes.Equal(got.ClientID, tt.cmd.ClientID) || got.Seq != tt.cmd.Seq || got.MinSeq != tt.cmd.MinSeq {
+				t.Errorf("round trip mismatch:\n got %+v\nwant %+v", *got, tt.cmd)
+			}
+		})
+	}
+}
+
+// TestCommand_PlainPutKeepsPhase1Format verifies a PUT without extension
+// fields encodes exactly as the original Type|KeyLen|ValLen|Key|Value format.
+func TestCommand_PlainPutKeepsPhase1Format(t *testing.T) {
+	c := Command{Type: CmdPut, Key: []byte("ab"), Value: []byte("xyz")}
+	data, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 9+2+3 {
+		t.Errorf("len = %d, want 14", len(data))
+	}
+}
+
+// TestCommand_LockValidation verifies lock commands require owner and TTL.
+func TestCommand_LockValidation(t *testing.T) {
+	bad := []Command{
+		{Type: CmdLockAcquire, Key: []byte("l"), TTLMs: 10},
+		{Type: CmdLockAcquire, Key: []byte("l"), Owner: []byte("o")},
+		{Type: CmdLockRelease, Key: []byte("l")},
+	}
+	for i, c := range bad {
+		if err := c.Validate(); err == nil {
+			t.Errorf("case %d: expected validation error", i)
+		}
+	}
+}
+
+// TestCommand_TruncatedExtensionRejected verifies a corrupted extension is
+// reported as an error rather than silently decoded.
+func TestCommand_TruncatedExtensionRejected(t *testing.T) {
+	c := Command{Type: CmdCAS, Key: []byte("k"), Value: []byte("v"), Expected: []byte("e")}
+	data, _ := c.Marshal()
+	if _, err := Unmarshal(data[:len(data)-3]); err == nil {
+		t.Error("expected error for truncated extension")
+	}
+}
