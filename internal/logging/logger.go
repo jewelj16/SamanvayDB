@@ -80,3 +80,11 @@ func (l *Logger) WithComponent(component string) *Logger {
 func (l *Logger) InfoContext(ctx context.Context, msg string, args ...any) {
 	l.Logger.InfoContext(ctx, msg, args...)
 }
+
+// WithShard returns a new Logger that carries shard_id on every line, so the
+// interleaved logs of many co-hosted Raft groups can be told apart.
+func (l *Logger) WithShard(shardID int32) *Logger {
+	return &Logger{
+		Logger: l.Logger.With("shard_id", shardID),
+	}
+}

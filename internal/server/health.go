@@ -17,6 +17,7 @@ import (
 // has loaded its configuration and initialized its logger.
 type HealthServer struct {
 	httpServer *http.Server
+	mux        *http.ServeMux
 	logger     *logging.Logger
 	ready      bool
 	mu         sync.RWMutex
@@ -37,6 +38,7 @@ func NewHealthServer(addr string, nodeID string, logger *logging.Logger) *Health
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", hs.handleHealth(nodeID))
 
+	hs.mux = mux
 	hs.httpServer = &http.Server{
 		Addr:    addr,
 		Handler: mux,
@@ -74,6 +76,24 @@ func (hs *HealthServer) SetReady() {
 	hs.mu.Lock()
 	hs.ready = true
 	hs.mu.Unlock()
+}
+
+// Handle registers an additional HTTP handler (e.g. /metrics, /status).
+func (hs *HealthServer) Handle(pattern string, h http.Handler) {
+	hs.mux.Handle(pattern, h)
+}
+
+// StartOn serves on an already-bound listener.
+func (hs *HealthServer) StartOn(ln net.Listener) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		hs.logger.Info("health server listening", "addr", ln.Addr().String())
+		if err := hs.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+	return errCh
 }
 
 // Start begins listening. It returns the actual listener address (useful when

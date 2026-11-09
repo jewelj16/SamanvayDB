@@ -1,13 +1,16 @@
-# SamanvayDB single-node configuration
+# SamanvayDB single-node configuration.
 #
-# This is the minimal config to run a standalone node with no replication.
-# For multi-node clusters, add raft_peers entries pointing to peer addresses.
+# Without a `cluster:` section the node runs as a one-node cluster with one
+# shard (replication factor 1). It is still fully durable: every write is
+# fsynced to the Raft log before it is acknowledged.
 
 node_id: "node-1"
-listen_addr: "127.0.0.1:7000"
+listen_addr: "127.0.0.1:7000"   # gRPC: client KV API, Admin API, Raft
+http_addr: "127.0.0.1:8080"     # /healthz, /metrics, /status
 data_dir: "./data/node-1"
 
-# Uncomment and populate for multi-node Raft clusters (Phase 3+):
-# raft_peers:
-#   - "127.0.0.1:7001"
-#   - "127.0.0.1:7002"
+raft:
+  election_timeout_min_ms: 150
+  election_timeout_max_ms: 300
+  heartbeat_interval_ms: 50     # >= 3x below the minimum election timeout
+  snapshot_threshold: 10000     # snapshot + compact the log every N entries
