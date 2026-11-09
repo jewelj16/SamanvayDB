@@ -1,0 +1,209 @@
+// Administrative API consumed by kvctl, dashboards and the orchestration
+// code (migration, membership, rebalancing).
+//
+// ShardInfo deliberately exposes exactly the vocabulary built throughout the
+// project — leader, replicas, committed index, migration state.
+// Prometheus metrics are served over plain HTTP at /metrics on each node's
+// http_addr rather than through this service.
+syntax = "proto3";
+
+package samanvaydb.admin;
+
+option go_package = "samanvaydb/proto/adminpb";
+
+service Admin {
+  // ---- Introspection ----
+  rpc ClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse);
+  rpc NodeStatus(NodeStatusRequest) returns (NodeStatusResponse);
+  rpc ShardStatus(ShardStatusRequest) returns (ShardStatusResponse);
+  // Authoritative read of the shard map from the metadata Raft group
+  // (forwarded to the meta leader by whichever node receives it).
+  rpc GetShardMap(GetShardMapRequest) returns (GetShardMapResponse);
+  // Compare-and-swap the shard map: succeeds only if the stored version
+  // still equals expected_version. Every topology change goes through here.
+  rpc UpdateShardMap(UpdateShardMapRequest) returns (AdminResponse);
+
+  // ---- Replica lifecycle on the receiving node ----
+  // Start an empty, non-voting replica of a shard (it waits for the
+  // group leader to add it as a learner and stream a snapshot).
+  rpc CreateReplica(CreateReplicaRequest) returns (AdminResponse);
+  // Stop a replica and delete its data. Only safe once the replica has been
+  // removed from the shard's Raft configuration.
+  rpc DestroyReplica(DestroyReplicaRequest) returns (AdminResponse);
+
+  // ---- Raft membership (served by the shard's leader) ----
+  rpc ChangeMembership(ChangeMembershipRequest) returns (ChangeMembershipResponse);
+
+  // ---- Orchestration (served by any node; coordinates via the meta group) ----
+  rpc AddNode(AddNodeRequest) returns (OperationResponse);
+  rpc RemoveNode(RemoveNodeRequest) returns (OperationResponse);
+  rpc ReplaceNode(ReplaceNodeRequest) returns (OperationResponse);
+  rpc MigrateShard(MigrateShardRequest) returns (OperationResponse);
+  rpc Rebalance(RebalanceRequest) returns (OperationResponse);
+
+  // ---- Fault injection (enforced in the receiving node's transport) ----
+  rpc SetFaults(SetFaultsRequest) returns (AdminResponse);
+  rpc ClearFaults(ClearFaultsRequest) returns (AdminResponse);
+}
+
+message ClusterStatusRequest {}
+
+message ClusterStatusResponse {
+  repeated ShardInfo shards = 1;
+  repeated NodeInfo nodes = 2;
+  uint64 shard_map_version = 3;
+}
+
+message ShardInfo {
+  int32 shard_id = 1;
+  string leader = 2;
+  repeated string replicas = 3;
+  uint64 committed_index = 4;
+  // STABLE | MIGRATING
+  string state = 5;
+  uint64 term = 6;
+  repeated ReplicaInfo replica_status = 7;
+  repeated string learners = 8;
+}
+
+message ReplicaInfo {
+  string node_id = 1;
+  // leader | follower | candidate | learner | down
+  string role = 2;
+  uint64 match_index = 3;
+  uint64 lag = 4;
+  bool up = 5;
+  uint64 applied_index = 6;
+}
+
+message NodeInfo {
+  string node_id = 1;
+  bool up = 2;
+  repeated int32 hosted_shards = 3;
+  string addr = 4;
+  string http_addr = 5;
+}
+
+message NodeStatusRequest {}
+
+message NodeStatusResponse {
+  NodeInfo node = 1;
+  repeated LocalShardStatus shards = 2;
+}
+
+message LocalShardStatus {
+  int32 shard_id = 1;
+  string role = 2;
+  uint64 term = 3;
+  string leader = 4;
+  uint64 commit_index = 5;
+  uint64 applied_index = 6;
+  uint64 last_log_index = 7;
+  uint64 snapshot_index = 8;
+  repeated string voters = 9;
+  repeated string learners = 10;
+  // Populated only on the leader: per-follower replication progress.
+  repeated ReplicaInfo followers = 11;
+  uint64 key_count = 12;
+}
+
+message ShardStatusRequest {
+  int32 shard_id = 1;
+}
+
+message ShardStatusResponse {
+  ShardInfo shard = 1;
+}
+
+message GetShardMapRequest {
+  // If true, return this node's cached copy without consulting the
+  // metadata group (cheap; may be stale).
+  bool cached = 1;
+}
+
+message GetShardMapResponse {
+  // JSON-encoded router.ShardMap.
+  bytes shard_map_json = 1;
+  string error = 2;
+}
+
+message UpdateShardMapRequest {
+  uint64 expected_version = 1;
+  // JSON-encoded router.ShardMap; its version must be expected_version + 1.
+  bytes shard_map_json = 2;
+}
+
+message CreateReplicaRequest {
+  int32 shard_id = 1;
+}
+
+message DestroyReplicaRequest {
+  int32 shard_id = 1;
+}
+
+message AdminResponse {
+  bool ok = 1;
+  string error = 2;
+  string redirect_leader = 3;
+}
+
+message ChangeMembershipRequest {
+  int32 shard_id = 1;
+  // add_learner | promote | remove | snapshot
+  string op = 2;
+  string node_id = 3;
+  string node_addr = 4;
+}
+
+message ChangeMembershipResponse {
+  bool ok = 1;
+  string error = 2;
+  string redirect_leader = 3;
+  uint64 index = 4;
+}
+
+message AddNodeRequest {
+  string node_id = 1;
+  string addr = 2;
+  string http_addr = 3;
+  // Run the greedy rebalancer after registering the node.
+  bool rebalance = 4;
+}
+
+message RemoveNodeRequest {
+  string node_id = 1;
+}
+
+message ReplaceNodeRequest {
+  string failed_node_id = 1;
+  string new_node_id = 2;
+  string new_addr = 3;
+  string new_http_addr = 4;
+}
+
+message MigrateShardRequest {
+  int32 shard_id = 1;
+  repeated string targets = 2;
+}
+
+message RebalanceRequest {}
+
+message OperationResponse {
+  bool ok = 1;
+  string error = 2;
+  // Human-readable progress log (e.g. migration state transitions).
+  repeated string log = 3;
+}
+
+message SetFaultsRequest {
+  // partition | delay | drop | slow
+  string kind = 1;
+  repeated string side_a = 2;
+  repeated string side_b = 3;
+  string from = 4;
+  string to = 5;
+  uint64 delay_ms = 6;
+  double drop_rate = 7;
+}
+
+message ClearFaultsRequest {}
