@@ -118,8 +118,8 @@ func TestRequestVote_LogNotUpToDate_ShorterLog(t *testing.T) {
 	resp := n.HandleRequestVote(RequestVoteRequest{
 		Term:         3,
 		CandidateID:  "node-2",
-		LastLogIndex: 2,  // candidate only has 2 entries
-		LastLogTerm:  2,  // same term
+		LastLogIndex: 2, // candidate only has 2 entries
+		LastLogTerm:  2, // same term
 	})
 
 	if resp.VoteGranted {
@@ -140,8 +140,8 @@ func TestRequestVote_LogUpToDate_HigherTerm(t *testing.T) {
 	resp := n.HandleRequestVote(RequestVoteRequest{
 		Term:         5,
 		CandidateID:  "node-2",
-		LastLogIndex: 1,  // shorter log
-		LastLogTerm:  5,  // but higher term — wins
+		LastLogIndex: 1, // shorter log
+		LastLogTerm:  5, // but higher term — wins
 	})
 
 	if !resp.VoteGranted {

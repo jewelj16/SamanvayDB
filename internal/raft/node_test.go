@@ -10,9 +10,9 @@ import (
 // noopSM is a StateMachine that does nothing (for node-state tests).
 type noopSM struct{}
 
-func (n *noopSM) Apply(_ LogEntry) error      { return nil }
-func (n *noopSM) Snapshot() ([]byte, error)   { return nil, nil }
-func (n *noopSM) Restore(_ []byte) error      { return nil }
+func (n *noopSM) Apply(_ LogEntry) any      { return nil }
+func (n *noopSM) Snapshot() ([]byte, error) { return nil, nil }
+func (n *noopSM) Restore(_ []byte) error    { return nil }
 
 // noopTransport discards all RPC calls (for node-state tests).
 type noopTransport struct{}
@@ -32,7 +32,17 @@ func testLogger() *logging.Logger {
 }
 
 func newTestNode(id NodeID, peers []NodeID) *Node {
-	return NewNode(id, peers, &noopSM{}, &noopTransport{}, testLogger())
+	n, err := NewNode(Config{
+		ID:           id,
+		Peers:        peers,
+		StateMachine: &noopSM{},
+		Transport:    &noopTransport{},
+		Logger:       testLogger(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return n
 }
 
 // ---- Term rule tests ----
@@ -143,7 +153,10 @@ func TestObserveTerm_LowerTermNoChange(t *testing.T) {
 
 // TestStateString verifies human-readable state names.
 func TestStateString(t *testing.T) {
-	tests := []struct{ s State; want string }{
+	tests := []struct {
+		s    State
+		want string
+	}{
 		{Follower, "Follower"},
 		{Candidate, "Candidate"},
 		{Leader, "Leader"},

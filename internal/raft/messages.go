@@ -6,10 +6,16 @@ package raft
 
 // RequestVoteRequest is sent by a Candidate to gather votes.
 type RequestVoteRequest struct {
-	Term         uint64 // candidate's term
+	Term         uint64 // candidate's term (for a pre-vote: the term it WOULD use)
 	CandidateID  NodeID // candidate requesting vote
 	LastLogIndex uint64 // index of candidate's last log entry
 	LastLogTerm  uint64 // term of candidate's last log entry
+	// PreVote marks a Pre-Vote probe (Raft dissertation §9.6): the receiver
+	// answers "would I vote for you?" without changing any of its own state.
+	// A node only starts a real election (and bumps its term) after winning
+	// a pre-vote majority, so a partitioned node rejoining the cluster cannot
+	// disrupt a healthy leader with an inflated term.
+	PreVote bool
 }
 
 // RequestVoteResponse is the voter's reply.
@@ -38,19 +44,23 @@ type AppendEntriesResponse struct {
 	// ConflictIndex is the earliest index the leader should retry from when
 	// Success=false, enabling faster log backtracking than decrementing by 1.
 	ConflictIndex uint64
-	ConflictTerm  uint64
+	// ConflictTerm is the term of the follower's conflicting entry (0 if the
+	// follower's log is simply too short).
+	ConflictTerm uint64
 }
 
 // ---- InstallSnapshot ----
 
 // InstallSnapshotRequest is sent by the Leader when a follower is too far
-// behind to catch up via normal AppendEntries.
+// behind to catch up via normal AppendEntries (the entries it needs have
+// already been compacted into a snapshot).
 type InstallSnapshotRequest struct {
 	Term              uint64 // leader's term
 	LeaderID          NodeID
-	LastIncludedIndex uint64 // snapshot covers log up to and including this index
-	LastIncludedTerm  uint64 // term of LastIncludedIndex entry
-	Data              []byte // raw snapshot bytes
+	LastIncludedIndex uint64     // snapshot covers log up to and including this index
+	LastIncludedTerm  uint64     // term of LastIncludedIndex entry
+	Config            Membership // configuration as of LastIncludedIndex
+	Data              []byte     // raw snapshot bytes
 }
 
 // InstallSnapshotResponse is the follower's reply.
