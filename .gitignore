@@ -37,3 +37,8 @@ Thumbs.db
 
 # Project plan
 samanvay_plan.md
+
+
+# Local clusters started by kvctl / scripts/demo.sh
+.samanvay-local/
+.samanvay-demo/

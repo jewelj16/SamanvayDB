@@ -1,32 +1,66 @@
-.PHONY: build test test-race proto-gen cluster-up cluster-down clean
+.PHONY: build test test-short test-race test-integration bench stress proto-gen cluster-up cluster-down demo docker-up docker-down clean
 
-# Build all binaries
+GO        ?= go
+BIN       ?= bin
+EXE       := $(if $(filter Windows_NT,$(OS)),.exe,)
+NODES     ?= 9
+SHARDS    ?= 3
+RF        ?= 3
+
+# Build the server and the CLI
 build:
-	go build -o bin/samanvaydb-server ./cmd/samanvaydb-server
-	go build -o bin/kvctl ./cmd/kvctl
+	$(GO) build -o $(BIN)/samanvaydb-server$(EXE) ./cmd/samanvaydb-server
+	$(GO) build -o $(BIN)/kvctl$(EXE) ./cmd/kvctl
 
-# Run all tests
+# Run all tests (unit + integration + failure scenarios)
 test:
-	go test ./...
+	$(GO) test ./...
 
-# Run all tests with the race detector — non-negotiable for concurrent code
+# Fast tier: skips tests that build and run real server processes
+test-short:
+	$(GO) test -short ./...
+
+# All tests under the race detector — non-negotiable for concurrent code
 test-race:
-	go test -race ./...
+	$(GO) test -race ./...
 
-# Regenerate Go stubs from proto/kv.proto (requires protoc + plugins)
+test-integration:
+	$(GO) test -v ./tests/integration/...
+
+# Benchmark matrices (replica-count and shard-count scaling); writes
+# benchmarks/results/latest.md
+bench:
+	SAMANVAY_BENCH=1 $(GO) test -run TestBenchmarkMatrix -timeout 60m -v ./benchmarks/
+
+# Stress tests (long-running; SAMANVAY_STRESS_DURATION=10m for a soak)
+stress:
+	SAMANVAY_STRESS=1 $(GO) test -timeout 120m -v ./tests/stress/
+
+# Regenerate Go stubs from proto/*.proto. Uses a pure-Go compiler
+# (bufbuild/protocompile) to drive protoc-gen-go and protoc-gen-go-grpc,
+# so the protoc C++ binary is not required.
 proto-gen:
-	protoc --go_out=. --go_opt=paths=source_relative \
-	       --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-	       proto/kv.proto
+	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+	cd tools/protogen && $(GO) run . -root ../.. -module samanvaydb proto/kv.proto proto/raft.proto proto/admin.proto
 
-# Start a local cluster (placeholder — wired up in later phases)
-cluster-up:
-	@echo "cluster-up: not yet implemented"
+# Local multi-process cluster (no Docker needed)
+cluster-up: build
+	$(BIN)/kvctl$(EXE) cluster start --nodes $(NODES) --shards $(SHARDS) --replication-factor $(RF)
 
-# Stop a local cluster (placeholder — wired up in later phases)
 cluster-down:
-	@echo "cluster-down: not yet implemented"
+	$(BIN)/kvctl$(EXE) cluster stop --purge
 
-# Remove build artifacts
+# Scripted end-to-end demo against a local cluster
+demo: build
+	bash scripts/demo.sh
+
+# Docker Compose 9-node / 3-shard / RF=3 cluster
+docker-up:
+	bash scripts/cluster-up.sh
+
+docker-down:
+	bash scripts/cluster-down.sh
+
 clean:
-	rm -rf bin/
+	rm -rf $(BIN)/ .samanvay-local/ data/
