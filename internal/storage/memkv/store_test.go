@@ -249,3 +249,75 @@ func TestStore_ConcurrentMixed(t *testing.T) {
 
 	wg.Wait()
 }
+
+// TestStore_SnapshotRestoreRoundTrip verifies Restore(Snapshot()) reproduces
+// the exact state, including binary keys/values and empty values.
+func TestStore_SnapshotRestoreRoundTrip(t *testing.T) {
+	s := New()
+	s.Put([]byte("b"), []byte("2"))
+	s.Put([]byte("a"), []byte("1"))
+	s.Put([]byte{0x00, 0xff}, []byte{0xde, 0xad})
+	s.Put([]byte("empty"), []byte{})
+
+	snap := s.Snapshot()
+	r := New()
+	r.Put([]byte("stale"), []byte("x"))
+	if err := r.Restore(snap); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if r.Len() != 4 {
+		t.Fatalf("Len = %d, want 4", r.Len())
+	}
+	if _, found, _ := r.Get([]byte("stale")); found {
+		t.Error("Restore must replace, not merge")
+	}
+	if v, _, _ := r.Get([]byte{0x00, 0xff}); !bytes.Equal(v, []byte{0xde, 0xad}) {
+		t.Errorf("binary value = %x", v)
+	}
+	if !bytes.Equal(r.Snapshot(), snap) {
+		t.Error("snapshots of identical states must be byte-identical")
+	}
+}
+
+// TestStore_SnapshotDeterministic verifies insertion order does not affect
+// the snapshot bytes (no map-iteration nondeterminism).
+func TestStore_SnapshotDeterministic(t *testing.T) {
+	a, b := New(), New()
+	for i := 0; i < 100; i++ {
+		a.Put([]byte(fmt.Sprintf("k%03d", i)), []byte("v"))
+		b.Put([]byte(fmt.Sprintf("k%03d", 99-i)), []byte("v"))
+	}
+	if !bytes.Equal(a.Snapshot(), b.Snapshot()) {
+		t.Error("snapshot depends on insertion order")
+	}
+}
+
+// TestStore_RestoreRejectsCorruption verifies a corrupted snapshot is
+// rejected and leaves the store untouched.
+func TestStore_RestoreRejectsCorruption(t *testing.T) {
+	s := New()
+	s.Put([]byte("k"), []byte("v"))
+	snap := s.Snapshot()
+	snap[14] ^= 0xff
+	r := New()
+	r.Put([]byte("keep"), []byte("me"))
+	if err := r.Restore(snap); err == nil {
+		t.Fatal("expected checksum error")
+	}
+	if _, found, _ := r.Get([]byte("keep")); !found {
+		t.Error("failed Restore must not modify the store")
+	}
+}
+
+// TestStore_ForEachSorted verifies ascending key iteration and early stop.
+func TestStore_ForEachSorted(t *testing.T) {
+	s := New()
+	for _, k := range []string{"c", "a", "b"} {
+		s.Put([]byte(k), []byte(k))
+	}
+	var got []string
+	s.ForEach(func(k, _ []byte) bool { got = append(got, string(k)); return len(got) < 2 })
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("ForEach = %v, want [a b]", got)
+	}
+}
