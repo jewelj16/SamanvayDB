@@ -1,0 +1,133 @@
+# Local 9-node / 3-shard / RF=3 SamanvayDB cluster (the demo topology).
+#
+#   bash scripts/cluster-up.sh      # build + start + wait for leaders
+#   bash scripts/cluster-down.sh    # stop + delete volumes
+#
+# Inside the network nodes reach each other as node-N:7000. From the host,
+# node N's gRPC port is 700N and its HTTP port (/metrics, /status) is 800N.
+# Note: the shard map advertises node-N:7000 addresses, so host-side clients
+# (kvctl) should run inside the network — scripts/cluster-up.sh does this
+# with `docker compose exec`.
+
+x-node: &node
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  image: samanvaydb:latest
+  restart: "no"
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+
+services:
+  node-1:
+    <<: *node
+    hostname: node-1
+    command: ["-config", "/configs/node-1.yaml"]
+    ports:
+      - "7001:7000"
+      - "8001:8080"
+    volumes:
+      - ../configs/docker:/configs:ro
+      - node-1-data:/data
+
+  node-2:
+    <<: *node
+    hostname: node-2
+    command: ["-config", "/configs/node-2.yaml"]
+    ports:
+      - "7002:7000"
+      - "8002:8080"
+    volumes:
+      - ../configs/docker:/configs:ro
+      - node-2-data:/data
+
+  node-3:
+    <<: *node
+    hostname: node-3
+    command: ["-config", "/configs/node-3.yaml"]
+    ports:
+      - "7003:7000"
+      - "8003:8080"
+    volumes:
+      - ../configs/docker:/configs:ro
+      - node-3-data:/data
+
+  node-4:
+    <<: *node
+    hostname: node-4
+    command: ["-config", "/configs/node-4.yaml"]
+    ports:
+      - "7004:7000"
+      - "8004:8080"
+    volumes:
+      - ../configs/docker:/configs:ro
+      - node-4-data:/data
+
+  node-5:
+    <<: *node
+    hostname: node-5
+    command: ["-config", "/configs/node-5.yaml"]
+    ports:
+      - "7005:7000"
+      - "8005:8080"
+    volumes:
+      - ../configs/docker:/configs:ro
+      - node-5-data:/data
+
+  node-6:
+    <<: *node
+    hostname: node-6
+    command: ["-config", "/configs/node-6.yaml"]
+    ports:
+      - "7006:7000"
+      - "8006:8080"
+    volumes:
+      - ../configs/docker:/configs:ro
+      - node-6-data:/data
+
+  node-7:
+    <<: *node
+    hostname: node-7
+    command: ["-config", "/configs/node-7.yaml"]
+    ports:
+      - "7007:7000"
+      - "8007:8080"
+    volumes:
+      - ../configs/docker:/configs:ro
+      - node-7-data:/data
+
+  node-8:
+    <<: *node
+    hostname: node-8
+    command: ["-config", "/configs/node-8.yaml"]
+    ports:
+      - "7008:7000"
+      - "8008:8080"
+    volumes:
+      - ../configs/docker:/configs:ro
+      - node-8-data:/data
+
+  node-9:
+    <<: *node
+    hostname: node-9
+    command: ["-config", "/configs/node-9.yaml"]
+    ports:
+      - "7009:7000"
+      - "8009:8080"
+    volumes:
+      - ../configs/docker:/configs:ro
+      - node-9-data:/data
+
+volumes:
+  node-1-data:
+  node-2-data:
+  node-3-data:
+  node-4-data:
+  node-5-data:
+  node-6-data:
+  node-7-data:
+  node-8-data:
+  node-9-data:

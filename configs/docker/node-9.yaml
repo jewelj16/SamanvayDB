@@ -1,0 +1,19 @@
+# Docker Compose topology: 9 nodes, 3 shards, replication factor 3.
+node_id: "node-9"
+listen_addr: "0.0.0.0:7000"
+http_addr: "0.0.0.0:8080"
+data_dir: "/data"
+
+cluster:
+  num_shards: 3
+  replication_factor: 3
+  nodes:
+    - {id: node-1, addr: "node-1:7000", http_addr: "node-1:8080"}
+    - {id: node-2, addr: "node-2:7000", http_addr: "node-2:8080"}
+    - {id: node-3, addr: "node-3:7000", http_addr: "node-3:8080"}
+    - {id: node-4, addr: "node-4:7000", http_addr: "node-4:8080"}
+    - {id: node-5, addr: "node-5:7000", http_addr: "node-5:8080"}
+    - {id: node-6, addr: "node-6:7000", http_addr: "node-6:8080"}
+    - {id: node-7, addr: "node-7:7000", http_addr: "node-7:8080"}
+    - {id: node-8, addr: "node-8:7000", http_addr: "node-8:8080"}
+    - {id: node-9, addr: "node-9:7000", http_addr: "node-9:8080"}
